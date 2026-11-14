@@ -8,7 +8,7 @@ kéo cửa sổ sang, sắp xếp trong System Settings → Displays.
 
 ## Cài và chạy
 
-1. Vào tab **Actions** của repo, mở lần build mới nhất có dấu ✓, tải file **OpenDisplayReceiver-win-x64** ở mục Artifacts.
+1. Lấy file `OpenDisplayReceiver-win-x64.zip`: tải ở tab **Actions** (artifact của lần build mới nhất), hoặc tự build bằng lệnh `dotnet publish` ở cuối trang.
 2. Giải nén, chạy `OpenDisplayReceiver.exe`. Bản này đã kèm .NET, không cần cài thêm gì.
 3. Lần đầu Windows hỏi **Firewall**: chọn **Allow** (cho phép mạng Private). Nếu lỡ bấm Cancel, vào
    Windows Security → Firewall → Allow an app, tick `OpenDisplayReceiver`.
