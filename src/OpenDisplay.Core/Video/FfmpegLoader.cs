@@ -19,13 +19,14 @@ public static class FfmpegLoader
             var baseDir = AppContext.BaseDirectory;
             string[] candidates =
             [
+                Environment.GetEnvironmentVariable("OPENDISPLAY_FFMPEG_DIR") ?? "",
                 baseDir,
                 Path.Combine(baseDir, "runtimes", "win-x64", "native"),
                 Path.Combine(baseDir, "dll", "x64"),
             ];
             foreach (var dir in candidates)
             {
-                if (Directory.Exists(dir) && Directory.EnumerateFiles(dir, "avcodec*").Any())
+                if (dir.Length > 0 && Directory.Exists(dir) && Directory.EnumerateFiles(dir, "*avcodec*").Any())
                 {
                     ffmpeg.RootPath = dir;
                     LoadedFrom = dir;

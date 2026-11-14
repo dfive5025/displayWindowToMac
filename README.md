@@ -44,12 +44,19 @@ tests/                    Test tự động: một "Mac giả" stream video th�
 tools/make_fixture.py     Tạo file video mẫu cho test từ ffmpeg.
 ```
 
-Build tay (cần .NET 8 SDK trên Windows):
+Build tay (cần .NET 8 SDK):
 
 ```
 dotnet test tests/OpenDisplay.Core.Tests
 dotnet run --project src/OpenDisplay.Windows
+dotnet publish src/OpenDisplay.Windows -c Release -r win-x64 --self-contained true -o out
 ```
+
+Trên Linux/macOS vẫn build được (nhờ `EnableWindowsTargeting`) và chạy được test nếu có thư viện FFmpeg 7.1:
+`OPENDISPLAY_FFMPEG_DIR=/đường/dẫn/ffmpeg dotnet test tests/OpenDisplay.Core.Tests -p:RuntimeIdentifier=linux-x64`.
+
+`tools/HeadlessReceiver` là receiver chạy trong terminal (không cửa sổ), in ra số khung hình giải mã mỗi giây.
+Nó đã được chạy thử với `od-fake-sender` của OpenDisplay: bắt tay pv 3, 293/293 khung hình, đổi độ phân giải giữa chừng đều ổn.
 
 Giao thức tham khảo: [PROTOCOL.md của OpenDisplay](https://github.com/peetzweg/opendisplay/blob/main/PROTOCOL.md) (pv 3).
 App này là một receiver độc lập viết theo tài liệu đó, không dùng lại code của OpenDisplay.

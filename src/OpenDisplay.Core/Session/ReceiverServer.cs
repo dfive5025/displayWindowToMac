@@ -63,9 +63,20 @@ public sealed class ReceiverServer : IDisposable
 
     public void Start()
     {
-        var listener = new TcpListener(IPAddress.IPv6Any, Port);
-        listener.Server.DualMode = true;
-        listener.Start();
+        TcpListener listener;
+        try
+        {
+            // Dual-stack: one socket for IPv4 and IPv6 senders.
+            listener = new TcpListener(IPAddress.IPv6Any, Port);
+            listener.Server.DualMode = true;
+            listener.Start();
+        }
+        catch (SocketException e) when (e.SocketErrorCode is SocketError.AddressFamilyNotSupported or SocketError.ProtocolNotSupported)
+        {
+            // IPv6 switched off on this machine.
+            listener = new TcpListener(IPAddress.Any, Port);
+            listener.Start();
+        }
         _listener = listener;
         Port = ((IPEndPoint)listener.LocalEndpoint).Port;
         Write($"listening on TCP {Port}");
