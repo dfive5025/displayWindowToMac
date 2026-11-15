@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>OpenDisplay.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Managed bindings for FFmpeg 7.x; the native DLLs come from the runtime package below. -->
+    <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
+    <PackageReference Include="Sdcb.FFmpeg.runtime.windows-x64" Version="7.1.0" />
+    <PackageReference Include="Makaretu.Dns.Multicast.New" Version="0.38.0" />
+  </ItemGroup>
+</Project>
