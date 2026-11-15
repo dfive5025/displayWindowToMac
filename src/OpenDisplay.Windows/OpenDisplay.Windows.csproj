@@ -10,7 +10,7 @@
     <AssemblyName>OpenDisplayReceiver</AssemblyName>
     <RootNamespace>OpenDisplay.Windows</RootNamespace>
     <Product>OpenDisplay Receiver for Windows</Product>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\OpenDisplay.Core\OpenDisplay.Core.csproj" />
