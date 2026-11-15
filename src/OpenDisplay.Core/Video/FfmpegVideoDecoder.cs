@@ -45,6 +45,13 @@ public sealed unsafe class FfmpegVideoDecoder : IDisposable
     /// Decodes one access unit (Annex B, starting at a start code). Returns the pictures it
     /// produced, normally exactly one. Throws <see cref="DecodeException"/> when the data is bad.
     /// </summary>
+    /// <summary>
+    /// Largest picture the caller will show (e.g. the window). Pictures bigger than this are
+    /// shrunk during colour conversion, aspect kept, which is far cheaper than scaling at paint time.
+    /// Zero means full size.
+    /// </summary>
+    public (int Width, int Height) MaxOutput { get; set; }
+
     public List<VideoFrame> Decode(byte[] data, int offset, int length)
     {
         var output = new List<VideoFrame>(1);
@@ -94,18 +101,33 @@ public sealed unsafe class FfmpegVideoDecoder : IDisposable
     private VideoFrame ToBgra(AVFrame* frame)
     {
         int w = frame->width, h = frame->height;
+        var (ow, oh) = OutputSize(w, h, MaxOutput);
+        // AREA averages the source pixels: the right filter for shrinking a desktop full of text.
+        int flags = ow == w && oh == h ? ffmpeg.SWS_POINT : ffmpeg.SWS_AREA;
         _sws = ffmpeg.sws_getCachedContext(_sws, w, h, (AVPixelFormat)frame->format,
-            w, h, AVPixelFormat.AV_PIX_FMT_BGRA, ffmpeg.SWS_BILINEAR, null, null, null);
+            ow, oh, AVPixelFormat.AV_PIX_FMT_BGRA, flags, null, null, null);
         if (_sws == null) throw new DecodeException($"no converter for pixel format {frame->format}");
 
-        var result = VideoFrame.Rent(w, h);
+        var result = VideoFrame.Rent(ow, oh);
+        result.SourceWidth = w;
+        result.SourceHeight = h;
         fixed (byte* dst = result.Pixels)
         {
             var dstData = new byte*[] { dst, null, null, null };
-            var dstStride = new[] { w * 4, 0, 0, 0 };
+            var dstStride = new[] { ow * 4, 0, 0, 0 };
             ffmpeg.sws_scale(_sws, frame->data.ToArray(), frame->linesize.ToArray(), 0, h, dstData, dstStride);
         }
         return result;
+    }
+
+    /// <summary>Fits (w, h) inside the limit, aspect kept, never enlarging; sizes stay even.</summary>
+    public static (int Width, int Height) OutputSize(int w, int h, (int Width, int Height) max)
+    {
+        if (max.Width <= 0 || max.Height <= 0 || (w <= max.Width && h <= max.Height)) return (w, h);
+        double scale = Math.Min((double)max.Width / w, (double)max.Height / h);
+        int ow = Math.Max(2, (int)(w * scale) & ~1);
+        int oh = Math.Max(2, (int)(h * scale) & ~1);
+        return (ow, oh);
     }
 
     public static string ErrorText(int error)

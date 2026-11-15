@@ -25,6 +25,11 @@ public sealed class VideoFrame
 
     public int Stride => Width * 4;
 
+    /// <summary>Size of the decoded stream before any shrinking (video pixels, for scroll units).</summary>
+    public int SourceWidth { get; internal set; }
+
+    public int SourceHeight { get; internal set; }
+
     public byte[] Pixels => _pixels ?? throw new ObjectDisposedException(nameof(VideoFrame));
 
     /// <summary>Sender clock capture time from the telemetry prefix, if any.</summary>

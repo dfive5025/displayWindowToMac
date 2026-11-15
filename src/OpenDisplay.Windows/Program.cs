@@ -16,7 +16,8 @@ internal static class Program
             ApplicationConfiguration.Initialize();
             var settings = AppSettings.Load();
             bool fullscreen = args.Any(a => a.Equals("--fullscreen", StringComparison.OrdinalIgnoreCase));
-            Application.Run(new MainForm(settings, fullscreen));
+            bool windowed = args.Any(a => a.Equals("--windowed", StringComparison.OrdinalIgnoreCase));
+            Application.Run(new MainForm(settings, fullscreen) { StayWindowed = windowed });
         }
         catch (Exception e)
         {

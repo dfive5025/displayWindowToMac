@@ -229,6 +229,7 @@ internal sealed class ReceiverConnection
         {
             _decoder ??= new FfmpegVideoDecoder(_codec);
             var sw = Stopwatch.StartNew();
+            _decoder.MaxOutput = _server.MaxOutput;
             var pictures = _decoder.Decode(frame.Buffer, start, frame.Length - start);
             _decodeMs.Add(sw.Elapsed.TotalMilliseconds);
             if (pictures.Count > 0 && _needKeyframe)

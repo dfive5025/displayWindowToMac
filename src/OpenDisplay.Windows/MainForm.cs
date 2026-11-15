@@ -44,6 +44,13 @@ internal sealed class MainForm : Form
     private bool _fullscreen;
     private bool _userLeftFullscreen;
 
+    /// <summary>Do not switch to fullscreen when streaming starts (--windowed).</summary>
+    public bool StayWindowed
+    {
+        get => _userLeftFullscreen;
+        set => _userLeftFullscreen = value;
+    }
+
     public MainForm(AppSettings settings, bool startFullscreen)
     {
         _settings = settings;
@@ -86,6 +93,7 @@ internal sealed class MainForm : Form
         base.OnLoad(e);
         _lastScreen = Screen.FromControl(this);
         RefreshPanel();
+        _server.MaxOutput = (ClientSize.Width, ClientSize.Height);
         _log.Write($"OpenDisplay Receiver for Windows, id {_settings.Id}");
         try
         {
@@ -433,7 +441,7 @@ internal sealed class MainForm : Form
         if (_state != SessionState.Streaming || _current == null) return;
         // One wheel notch (120) scrolls about three lines. Wheel up shows content above,
         // which is the natural-scrolling positive direction on the wire.
-        double pixels = e.Delta / 120.0 * 3 * 20 * (_current.Height / 1080.0 * 2);
+        double pixels = e.Delta / 120.0 * 3 * 20 * (_current.SourceHeight / 1080.0 * 2);
         if ((ModifierKeys & Keys.Shift) != 0) _server.SendScroll(pixels, 0);
         else _server.SendScroll(0, pixels);
     }
@@ -513,6 +521,8 @@ internal sealed class MainForm : Form
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        // Have the decoder shrink frames to the window, so painting never scales big frames.
+        if (_server != null) _server.MaxOutput = (ClientSize.Width, ClientSize.Height);
         Invalidate();
     }
 

@@ -54,6 +54,9 @@ public sealed class ReceiverServer : IDisposable
 
     public SessionState State { get; private set; } = SessionState.Waiting;
 
+    /// <summary>Largest picture the UI will show; decoded frames are shrunk to fit. (0, 0) = full size.</summary>
+    public (int Width, int Height) MaxOutput { get; set; }
+
     public string? SenderAddress { get; private set; }
 
     /// <summary>Send a <c>hello</c> with HEVC in <c>videoCaps</c> (HEVC software decode costs more CPU).</summary>
