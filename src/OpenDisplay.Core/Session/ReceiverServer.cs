@@ -59,6 +59,9 @@ public sealed class ReceiverServer : IDisposable
 
     public string? SenderAddress { get; private set; }
 
+    /// <summary>IP of the live sender (IPv4-mapped addresses unwrapped), e.g. to reach KeyBridge on the same Mac.</summary>
+    public IPAddress? SenderIp { get; private set; }
+
     /// <summary>Send a <c>hello</c> with HEVC in <c>videoCaps</c> (HEVC software decode costs more CPU).</summary>
     public bool OfferHevc { get; set; }
 
@@ -132,6 +135,7 @@ public sealed class ReceiverServer : IDisposable
         if (old != null) Write($"new sender {conn.Remote} replaces {old.Remote}");
         old?.Close("replaced by a new sender");
         SenderAddress = conn.Remote;
+        SenderIp = conn.RemoteAddress;
         SetState(SessionState.Connected, $"connected to {conn.Remote}");
         return true;
     }
@@ -154,6 +158,7 @@ public sealed class ReceiverServer : IDisposable
         {
             Write($"session with {conn.Remote} ended: {reason}");
             SenderAddress = null;
+            SenderIp = null;
             SetState(SessionState.Waiting, "waiting for a sender");
             CursorChanged?.Invoke(new CursorState(false, 0, 0));
         }

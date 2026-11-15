@@ -4,6 +4,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using OpenDisplay.Core.Discovery;
+using OpenDisplay.Core.Keyboard;
 using OpenDisplay.Core.Session;
 using OpenDisplay.Core.Video;
 using OpenDisplay.Core.Wire;
@@ -43,6 +44,14 @@ internal sealed class MainForm : Form
     private Rectangle _windowedBounds;
     private bool _fullscreen;
     private bool _userLeftFullscreen;
+
+    // Keyboard to Mac (KeyBridge).
+    private readonly KeyBridgeClient _keys = new();
+    private readonly HashSet<int> _macKeysDown = [];
+    private readonly System.Windows.Forms.Timer _keysRetry = new() { Interval = 5000 };
+    private string _keysStatus = "keyboard: not linked";
+    private bool _keysConnecting;
+    private bool _askedForCode;
 
     /// <summary>Do not switch to fullscreen when streaming starts (--windowed).</summary>
     public bool StayWindowed
@@ -85,7 +94,131 @@ internal sealed class MainForm : Form
             Invalidate();
         });
 
+        _keys.StatusChanged += (status, detail) => UI(() =>
+        {
+            _keysStatus = $"keyboard: {detail}";
+            _log.Write(_keysStatus);
+            if (status != KeyBridgeStatus.Connected) _macKeysDown.Clear();
+            Invalidate();
+        });
+        _keysRetry.Tick += (_, _) => { _ = LinkKeyboardAsync(interactive: false); };
+        _server.StateChanged += (s, _detail) => UI(() =>
+        {
+            if (s == SessionState.Waiting)
+            {
+                _keysRetry.Stop();
+                _keys.Disconnect(KeyBridgeStatus.Off, "not linked (no Mac connected)");
+            }
+            else if (!_keys.IsConnected && !_keysConnecting)
+            {
+                _keysRetry.Start();
+                _ = LinkKeyboardAsync(interactive: true);
+            }
+        });
+
         if (startFullscreen) Shown += (_, _) => ToggleFullscreen();
+    }
+
+    /// <summary>Connect to KeyBridge on the Mac that is streaming to us.</summary>
+    private async Task LinkKeyboardAsync(bool interactive)
+    {
+        var mac = _server.SenderIp;
+        if (mac == null || _keys.IsConnected || _keysConnecting) return;
+        if (string.IsNullOrWhiteSpace(_settings.KeyBridgeCode))
+        {
+            if (interactive && !_askedForCode) AskForCode("Type on the Mac with this PC's keyboard?");
+            else _keysStatus = "keyboard: no pairing code (press F2)";
+            if (string.IsNullOrWhiteSpace(_settings.KeyBridgeCode)) return;
+        }
+        _keysConnecting = true;
+        try
+        {
+            var status = await _keys.ConnectAsync(mac, _settings.KeyBridgeCode!, _settings.Name);
+            if (status == KeyBridgeStatus.BadCode && !_askedForCode)
+                AskForCode("The Mac rejected the pairing code.");
+        }
+        finally
+        {
+            _keysConnecting = false;
+        }
+        if (_keys.IsConnected) _keysRetry.Stop();
+        else if (_server.State != SessionState.Waiting) _keysRetry.Start();
+    }
+
+    private void AskForCode(string reason)
+    {
+        _askedForCode = true;
+        bool wasTop = TopMost;
+        TopMost = false;
+        using var dlg = new PairingDialog(_settings.KeyBridgeCode, reason);
+        var result = dlg.ShowDialog(this);
+        TopMost = wasTop;
+        if (result != DialogResult.OK || dlg.Code.Length != 6) return;
+        _settings.KeyBridgeCode = dlg.Code;
+        _settings.Save();
+        _askedForCode = false;
+        _ = LinkKeyboardAsync(interactive: false);
+    }
+
+    // Keys this PC keeps for itself even while typing on the Mac.
+    private static bool IsLocalHotkey(int vk, bool alt) =>
+        vk is 0x7A /* F11 */ or 0x70 /* F1 */ or 0x71 /* F2 */ || (alt && vk == 0x73 /* Alt+F4 */);
+
+    private const int WM_KEYDOWN = 0x100, WM_KEYUP = 0x101, WM_SYSKEYDOWN = 0x104, WM_SYSKEYUP = 0x105;
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg is WM_KEYDOWN or WM_KEYUP or WM_SYSKEYDOWN or WM_SYSKEYUP && ForwardKey(ref m)) return;
+        base.WndProc(ref m);
+    }
+
+    public override bool PreProcessMessage(ref Message m)
+    {
+        // Stop WinForms from turning Alt, Tab and arrows into menu/focus actions while keys go to the Mac.
+        if (m.Msg is WM_KEYDOWN or WM_KEYUP or WM_SYSKEYDOWN or WM_SYSKEYUP && ShouldForward(m)) return false;
+        return base.PreProcessMessage(ref m);
+    }
+
+    private bool ShouldForward(in Message m)
+    {
+        if (!_keys.IsConnected || _state == SessionState.Waiting) return false;
+        int vk = (int)(long)m.WParam;
+        long lp = (long)m.LParam;
+        bool alt = (lp & (1L << 29)) != 0;
+        return !IsLocalHotkey(vk, alt);
+    }
+
+    /// <returns>True when the key went to the Mac and Windows should not act on it.</returns>
+    private bool ForwardKey(ref Message m)
+    {
+        if (!ShouldForward(m)) return false;
+        int vk = (int)(long)m.WParam;
+        long lp = (long)m.LParam;
+        bool down = m.Msg is WM_KEYDOWN or WM_SYSKEYDOWN;
+        bool extended = (lp & (1L << 24)) != 0;
+        int scan = (int)((lp >> 16) & 0xFF);
+        int? mac = KeyMap.ToMac(vk, extended, scan, _settings.CtrlIsCommand);
+        if (mac is not int code) return true; // swallow keys the Mac has no use for (e.g. Unikey's VK_PACKET)
+        bool isModifier = code is >= 0x36 and <= 0x3E && code != 0x39;
+        if (down)
+        {
+            // Windows auto-repeats held keys; the Mac should repeat letters but not modifiers.
+            if (!_macKeysDown.Add(code) && isModifier) return true;
+        }
+        else if (!_macKeysDown.Remove(code)) return true;
+        _keys.SendKey(code, down);
+        return true;
+    }
+
+    protected override void OnDeactivate(EventArgs e)
+    {
+        base.OnDeactivate(e);
+        // Alt+Tab away must not leave Command or Shift stuck down on the Mac.
+        if (_macKeysDown.Count > 0)
+        {
+            _macKeysDown.Clear();
+            _keys.ReleaseAll();
+        }
     }
 
     protected override void OnLoad(EventArgs e)
@@ -131,6 +264,8 @@ internal sealed class MainForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         _bonjour?.Dispose();
+        _keysRetry.Stop();
+        _keys.Dispose();
         _server.Shutdown();
         if (_windowsCursorHidden) Cursor.Show();
         ClearVideo();
@@ -323,11 +458,12 @@ internal sealed class MainForm : Form
             $"Name: {_settings.Name}",
             $"Address: {string.Join(", ", LocalAddresses())}  (port {_server.Port})",
             $"Status: {_stateDetail}",
+            $"{char.ToUpper(_keysStatus[0])}{_keysStatus[1..]}",
             "",
             "On the Mac: open OpenDisplay and pick this PC from the Connection menu.",
             "Both computers must be on the same network. Allow this app through Windows Firewall when asked.",
             "",
-            "F11: fullscreen    Esc: leave fullscreen    F1: show log",
+            "F11: fullscreen    Esc: leave fullscreen    F1: show log    F2: keyboard pairing code",
         };
         using var title = new Font("Segoe UI", 20, FontStyle.Bold, GraphicsUnit.Point);
         using var body = new Font("Segoe UI", 11, FontStyle.Regular, GraphicsUnit.Point);
@@ -490,6 +626,11 @@ internal sealed class MainForm : Form
                 break;
             case Keys.F5:
                 _server.RequestKeyframe();
+                e.Handled = true;
+                break;
+            case Keys.F2:
+                _askedForCode = false;
+                AskForCode(_keys.IsConnected ? "Change the pairing code." : "Type on the Mac with this PC's keyboard?");
                 e.Handled = true;
                 break;
         }
