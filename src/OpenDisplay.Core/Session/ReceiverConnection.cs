@@ -42,10 +42,14 @@ internal sealed class ReceiverConnection
         _server = server;
         _client = client;
         _stream = client.GetStream();
-        Remote = client.Client.RemoteEndPoint?.ToString() ?? "?";
+        var ep = client.Client.RemoteEndPoint as System.Net.IPEndPoint;
+        Remote = ep?.ToString() ?? "?";
+        RemoteAddress = ep == null ? null : ep.Address.IsIPv4MappedToIPv6 ? ep.Address.MapToIPv4() : ep.Address;
     }
 
     public string Remote { get; }
+
+    public System.Net.IPAddress? RemoteAddress { get; }
 
     public async Task RunAsync(CancellationToken serverToken)
     {

@@ -40,7 +40,7 @@ public static class Outgoing
             w.WriteStartArray("videoCaps");
             w.WriteStartObject();
             w.WriteString("codec", "h264");
-            w.WriteNumber("maxFrameRate", Math.Min(h.MaxFrameRate, 60));
+            w.WriteNumber("maxFrameRate", Math.Clamp(h.MaxFrameRate, 30, 120));
             w.WriteEndObject();
             if (h.OfferHevc)
             {
@@ -49,7 +49,7 @@ public static class Outgoing
                 w.WriteString("codec", "hevc");
                 w.WriteNumber("maxWidth", longSide);
                 w.WriteNumber("maxHeight", longSide);
-                w.WriteNumber("maxFrameRate", Math.Min(h.MaxFrameRate, 60));
+                w.WriteNumber("maxFrameRate", Math.Clamp(h.MaxFrameRate, 30, 120));
                 w.WriteEndObject();
             }
             w.WriteEndArray();

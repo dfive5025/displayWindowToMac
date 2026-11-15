@@ -28,6 +28,26 @@ lăn chuột để cuộn (giữ Shift để cuộn ngang).
 Cài đặt nằm ở `%LOCALAPPDATA%\OpenDisplayReceiver\settings.json`: đổi `Name` để đổi tên hiện trên Mac,
 `OfferHevc: true` để nhận HEVC (nét hơn ở cùng băng thông nhưng tốn CPU hơn khi giải mã).
 
+## Bàn phím Windows gõ sang Mac (KeyBridge)
+
+Giao thức OpenDisplay không có phím, nên Mac cần chạy thêm một app nhỏ là KeyBridge (`mac/KeyBridge`).
+
+1. Trên Mac: `zsh mac/build-mac.sh` (cần Xcode và `brew install xcodegen`), rồi chạy `mac/build/KeyBridge`.
+2. Lần đầu macOS hỏi quyền Accessibility: bật cho app đang chạy KeyBridge (vd Terminal) trong
+   System Settings > Privacy & Security > Accessibility, rồi chạy lại KeyBridge.
+3. KeyBridge in ra mã ghép đôi 6 số. Khi Mac bắt đầu chiếu, app Windows hỏi mã này (F2 để nhập lại).
+
+Phím: Ctrl trái = Command (Ctrl+C/V như Windows), Ctrl phải = Control, Alt = Option, Win = Control.
+Đổi `CtrlIsCommand: false` trong settings.json nếu muốn Ctrl là Control. F1, F2, F11, Alt+F4 vẫn thuộc Windows;
+Esc gửi sang Mac (thoát fullscreen bằng F11). Gõ tiếng Việt: tắt Unikey/EVKey bên Windows, dùng bộ gõ của Mac.
+
+## Chế độ 99 Hz / 120 Hz
+
+App Windows báo cho Mac tần số quét thật của màn hình (vd 99 Hz). OpenDisplay gốc luôn chạy 60 Hz, nên
+`mac/build-mac.sh` build thêm bản OpenDisplay đã vá (`mac/patches/opendisplay-high-refresh.patch`) để màn ảo
+trên Mac và luồng video chạy theo tần số đó (30–120 Hz). Chạy bản này bằng `mac/build/opendisplay/run.sh`
+(thoát app OpenDisplay thường trước). Bấm F1 bên Windows để xem số fps thật.
+
 ## Giới hạn hiện tại
 
 - Chỉ qua mạng (Wi‑Fi/LAN). Chưa chạy qua cáp USB.

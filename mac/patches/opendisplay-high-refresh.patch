@@ -1,0 +1,90 @@
+diff --git a/Mac/MacSender.swift b/Mac/MacSender.swift
+index 64c86a3..35935a1 100644
+--- a/Mac/MacSender.swift
++++ b/Mac/MacSender.swift
+@@ -661,6 +661,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
+ 
+     private func setupExtend(_ info: PhoneInfo) async throws {
+         let facts = info.facts
++        VirtualDisplay.preferredRefreshRate = VirtualDisplay.preferredRefreshRate(forReceiverMax: info.displayMaxFrameRate)
++        Log.info("virtual display refresh: \(Int(VirtualDisplay.preferredRefreshRate)) Hz")
+         Log.info("phone hello: " + (info.panel?.facts != nil
+             ? "panel \(facts.pixelsWide)x\(facts.pixelsHigh) @\(facts.scale)"
+                 + (facts.pointsWide.map { " points \($0)x\(facts.pointsHigh ?? 0)" } ?? "")
+@@ -1316,7 +1318,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
+         // Ask for 120 even though the virtual display is 60Hz: requesting
+         // exactly 1/60 makes SCK's rate limiter skip frames that arrive a
+         // hair early (beat frequency) — measured ~51fps instead of 60.
+-        config.minimumFrameInterval = CMTime(value: 1, timescale: 120)
++        // Same beat-frequency reasoning at higher refresh: ask for twice the display rate.
++        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(max(120, Int(VirtualDisplay.preferredRefreshRate * 2))))
+         // 420v matches the encoder's native input — skips a BGRA→YUV conversion
+         // inside VideoToolbox. (`-pixfmt bgra` reverts for A/B testing.)
+         config.pixelFormat = UserDefaults.standard.string(forKey: "pixfmt") == "bgra"
+diff --git a/Mac/StreamConfiguration.swift b/Mac/StreamConfiguration.swift
+index 393d4af..eda8e9f 100644
+--- a/Mac/StreamConfiguration.swift
++++ b/Mac/StreamConfiguration.swift
+@@ -51,7 +51,10 @@ struct PixelSize: Equatable {
+ struct VideoStreamConfiguration: Equatable {
+     static let h264Codec = "h264"
+     static let hevcCodec = "hevc"
+-    static let defaultFramesPerSecond = 60
++    // Upper bound; the receiver's displayMaxFrameRate and videoCaps lower it
++    // (a 60 Hz iPad still gets 60). Raised from 60 so 100 Hz panels can use it.
++    static let defaultFramesPerSecond = 120
++    static let legacyFramesPerSecond = 60
+     // H.264 High@L5.2 MaxFS and MaxMBPS. Keeping these as codec constraints,
+     // rather than a model/display special case, is what makes 5K and future
+     // receiver sizes follow the same selection path.
+@@ -112,9 +115,10 @@ struct VideoStreamConfiguration: Equatable {
+         let scaled = PixelSize(
+             width: even(Int(Double(shown.width) * quality.scale)),
+             height: even(Int(Double(shown.height) * quality.scale)))
++        // Absent displayMaxFrameRate is the legacy 60 FPS contract (PROTOCOL.md 6.1).
+         let targetFPS = max(1, min(requestedFramesPerSecond,
+                                    displayMaxFrameRate.flatMap { $0 > 0 ? $0 : nil }
+-                                       ?? requestedFramesPerSecond))
++                                       ?? legacyFramesPerSecond))
+ 
+         // Absence is the legacy H.264 contract. Never infer HEVC support from
+         // an older receiver that did not advertise codec capabilities.
+diff --git a/Mac/VirtualDisplay.swift b/Mac/VirtualDisplay.swift
+index a852c4e..4baa524 100644
+--- a/Mac/VirtualDisplay.swift
++++ b/Mac/VirtualDisplay.swift
+@@ -7,6 +7,16 @@ import CoreGraphics
+ /// A non-Retina receiver panel gets a 1x display instead (`scale` 1), whose
+ /// points are its pixels, so it is streamed 1:1 like the panel's own desktop.
+ final class VirtualDisplay {
++    /// Refresh rate for new virtual display modes. Follows the receiver's
++    /// hello.displayMaxFrameRate (clamped to 60...120) so a 100 Hz panel can
++    /// be fed more than 60 frames per second. Set before creating a display.
++    static var preferredRefreshRate: Double = 60
++
++    static func preferredRefreshRate(forReceiverMax max: Int?) -> Double {
++        guard let max, max > 60 else { return 60 }
++        return Double(min(max, 120))
++    }
++
+ 
+     // CGVirtualDisplay's descriptor ceiling is immutable even though its mode
+     // list can be replaced. Keep defensive 8K headroom in addition to the
+@@ -79,7 +89,7 @@ final class VirtualDisplay {
+         settings = CGVirtualDisplaySettings()
+         settings.hiDPI = self.scale == 2 ? 1 : 0
+         settings.modes = [
+-            CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh), refreshRate: 60)
++            CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh), refreshRate: Self.preferredRefreshRate)
+         ]
+         guard display.apply(settings) else {
+             Log.info("CGVirtualDisplay applySettings FAILED")
+@@ -136,7 +146,7 @@ final class VirtualDisplay {
+         let newSettings = CGVirtualDisplaySettings()
+         newSettings.hiDPI = scale == 2 ? 1 : 0
+         newSettings.modes = [
+-            CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh), refreshRate: 60)
++            CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh), refreshRate: Self.preferredRefreshRate)
+         ]
+         // The enforcement tick must not run between the new mode and its
+         // placement: it would re-apply the old origin target, or report

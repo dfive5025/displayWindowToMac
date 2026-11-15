@@ -21,6 +21,12 @@ internal sealed class AppSettings
     /// <summary>Also offer HEVC. Off by default: software HEVC decode costs more CPU than H.264.</summary>
     public bool OfferHevc { get; set; }
 
+    /// <summary>6-digit code printed by KeyBridge on the Mac; lets this PC type there.</summary>
+    public string? KeyBridgeCode { get; set; }
+
+    /// <summary>Left Ctrl acts as Command on the Mac (Ctrl+C/V work as on Windows); right Ctrl is Control.</summary>
+    public bool CtrlIsCommand { get; set; } = true;
+
     public static AppSettings Load()
     {
         AppSettings? s = null;
