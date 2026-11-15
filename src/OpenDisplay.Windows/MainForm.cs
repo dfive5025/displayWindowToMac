@@ -25,7 +25,8 @@ internal sealed class MainForm : Form
     private readonly object _frameGate = new();
     private VideoFrame? _pendingFrame;
     private bool _paintQueued;
-    private Bitmap? _bitmap;
+    /// <summary>The frame on screen. Held (not released) until a newer one replaces it.</summary>
+    private VideoFrame? _current;
 
     private CursorState _cursor;
     private Bitmap? _cursorImage;
@@ -182,11 +183,11 @@ internal sealed class MainForm : Form
             _pendingFrame?.Release();
             _pendingFrame = null;
         }
-        _bitmap?.Dispose();
-        _bitmap = null;
+        _current?.Release();
+        _current = null;
     }
 
-    /// <summary>Copies the newest decoded frame into the reusable bitmap (UI thread).</summary>
+    /// <summary>Swaps in the newest decoded frame (UI thread). No copy: the frame is drawn straight from its buffer.</summary>
     private void TakePendingFrame()
     {
         VideoFrame? frame;
@@ -197,62 +198,55 @@ internal sealed class MainForm : Form
             _paintQueued = false;
         }
         if (frame == null) return;
-        try
-        {
-            if (_bitmap == null || _bitmap.Width != frame.Width || _bitmap.Height != frame.Height)
-            {
-                _bitmap?.Dispose();
-                _bitmap = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
-            }
-            var data = _bitmap.LockBits(new Rectangle(0, 0, frame.Width, frame.Height), ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
-            try
-            {
-                if (data.Stride == frame.Stride)
-                {
-                    Marshal.Copy(frame.Pixels, 0, data.Scan0, frame.Stride * frame.Height);
-                }
-                else
-                {
-                    for (int y = 0; y < frame.Height; y++)
-                        Marshal.Copy(frame.Pixels, y * frame.Stride, data.Scan0 + y * data.Stride, frame.Stride);
-                }
-            }
-            finally
-            {
-                _bitmap.UnlockBits(data);
-            }
-        }
-        finally
-        {
-            frame.Release();
-        }
+        _current?.Release();
+        _current = frame;
     }
 
     /// <summary>Where the video sits in the window: as large as fits, aspect kept, centered.</summary>
     private RectangleF VideoRect()
     {
-        if (_bitmap == null) return RectangleF.Empty;
+        if (_current == null) return RectangleF.Empty;
         var client = ClientRectangle;
-        float scale = Math.Min((float)client.Width / _bitmap.Width, (float)client.Height / _bitmap.Height);
-        float w = _bitmap.Width * scale, h = _bitmap.Height * scale;
+        float scale = Math.Min((float)client.Width / _current.Width, (float)client.Height / _current.Height);
+        float w = _current.Width * scale, h = _current.Height * scale;
         return new RectangleF(client.X + (client.Width - w) / 2, client.Y + (client.Height - h) / 2, w, h);
     }
 
+    // Render stats for the F1 overlay.
+    private readonly System.Diagnostics.Stopwatch _statsClock = System.Diagnostics.Stopwatch.StartNew();
+    private int _shownThisSecond;
+    private double _paintMsMax;
+    private string _renderStats = "";
+    private int _statsSeconds;
+
     protected override void OnPaint(PaintEventArgs e)
     {
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var before = _current;
         TakePendingFrame();
+        if (_current != before) _shownThisSecond++;
+        PaintScene(e);
+        double ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+        _paintMsMax = Math.Max(_paintMsMax, ms);
+        if (_statsClock.ElapsedMilliseconds >= 1000)
+        {
+            _renderStats = $"shown {_shownThisSecond} fps, slowest paint {_paintMsMax:0.0} ms, video {_current?.Width}x{_current?.Height}, window {ClientSize.Width}x{ClientSize.Height}";
+            if (_state == SessionState.Streaming && ++_statsSeconds % 5 == 0) _log.Write($"render: {_renderStats}");
+            _shownThisSecond = 0;
+            _paintMsMax = 0;
+            _statsClock.Restart();
+        }
+    }
+
+    private void PaintScene(PaintEventArgs e)
+    {
         var g = e.Graphics;
         g.Clear(Color.Black);
 
-        if (_bitmap != null && _state == SessionState.Streaming)
+        if (_current != null && _state == SessionState.Streaming)
         {
-            var rect = VideoRect();
-            bool oneToOne = Math.Abs(rect.Width - _bitmap.Width) < 0.5f && Math.Abs(rect.Height - _bitmap.Height) < 0.5f;
-            g.InterpolationMode = oneToOne ? InterpolationMode.NearestNeighbor : InterpolationMode.Bilinear;
-            g.PixelOffsetMode = PixelOffsetMode.Half;
-            g.CompositingMode = CompositingMode.SourceCopy;
-            g.DrawImage(_bitmap, rect);
-            g.CompositingMode = CompositingMode.SourceOver;
+            var rect = Rectangle.Round(VideoRect());
+            BlitFrame(g, _current, rect);
             DrawCursor(g, rect);
         }
         else
@@ -341,10 +335,12 @@ internal sealed class MainForm : Form
         using var bg = new SolidBrush(Color.FromArgb(190, 0, 0, 0));
         var lines = _log.Recent();
         float lineH = font.GetHeight(g) + 1;
-        var box = new RectangleF(8, 8, Math.Min(ClientRectangle.Width - 16, 900), lineH * (lines.Length + 1) + 8);
+        var box = new RectangleF(8, 8, Math.Min(ClientRectangle.Width - 16, 900), lineH * (lines.Length + 2) + 8);
         g.FillRectangle(bg, box);
         float y = 12;
         g.DrawString($"Log file: {_log.FilePath}", font, Brushes.LightSkyBlue, 12, y);
+        y += lineH;
+        g.DrawString(_renderStats, font, Brushes.LightGreen, 12, y);
         foreach (var line in lines)
         {
             y += lineH;
@@ -430,10 +426,10 @@ internal sealed class MainForm : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (_state != SessionState.Streaming || _bitmap == null) return;
+        if (_state != SessionState.Streaming || _current == null) return;
         // One wheel notch (120) scrolls about three lines. Wheel up shows content above,
         // which is the natural-scrolling positive direction on the wire.
-        double pixels = e.Delta / 120.0 * 3 * 20 * (_bitmap.Height / 1080.0 * 2);
+        double pixels = e.Delta / 120.0 * 3 * 20 * (_current.Height / 1080.0 * 2);
         if ((ModifierKeys & Keys.Shift) != 0) _server.SendScroll(pixels, 0);
         else _server.SendScroll(0, pixels);
     }
@@ -528,6 +524,69 @@ internal sealed class MainForm : Form
             // The window is closing.
         }
     }
+
+    /// <summary>
+    /// Draws the BGRA frame with GDI's StretchDIBits: no Bitmap copy, and far cheaper than
+    /// GDI+ DrawImage, whose scaling cost tens of milliseconds per 1080p frame.
+    /// </summary>
+    private static unsafe void BlitFrame(Graphics g, VideoFrame frame, Rectangle dest)
+    {
+        var bmi = new BITMAPINFOHEADER
+        {
+            biSize = (uint)sizeof(BITMAPINFOHEADER),
+            biWidth = frame.Width,
+            biHeight = -frame.Height, // negative: rows are top-down
+            biPlanes = 1,
+            biBitCount = 32,
+            biCompression = 0, // BI_RGB
+        };
+        IntPtr hdc = g.GetHdc();
+        try
+        {
+            bool oneToOne = dest.Width == frame.Width && dest.Height == frame.Height;
+            // HALFTONE looks right when scaling down text; COLORONCOLOR is cheaper when scaling up.
+            SetStretchBltMode(hdc, oneToOne ? COLORONCOLOR : dest.Width < frame.Width ? HALFTONE : COLORONCOLOR);
+            SetBrushOrgEx(hdc, 0, 0, IntPtr.Zero);
+            fixed (byte* pixels = frame.Pixels)
+            {
+                StretchDIBits(hdc, dest.X, dest.Y, dest.Width, dest.Height, 0, 0, frame.Width, frame.Height,
+                    (IntPtr)pixels, ref bmi, 0 /* DIB_RGB_COLORS */, 0x00CC0020 /* SRCCOPY */);
+            }
+        }
+        finally
+        {
+            g.ReleaseHdc(hdc);
+        }
+    }
+
+    private const int COLORONCOLOR = 3;
+    private const int HALFTONE = 4;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BITMAPINFOHEADER
+    {
+        public uint biSize;
+        public int biWidth;
+        public int biHeight;
+        public ushort biPlanes;
+        public ushort biBitCount;
+        public uint biCompression;
+        public uint biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public uint biClrUsed;
+        public uint biClrImportant;
+    }
+
+    [DllImport("gdi32.dll")]
+    private static extern int StretchDIBits(IntPtr hdc, int xDest, int yDest, int wDest, int hDest, int xSrc, int ySrc,
+        int wSrc, int hSrc, IntPtr bits, ref BITMAPINFOHEADER bmi, uint usage, uint rop);
+
+    [DllImport("gdi32.dll")]
+    private static extern int SetStretchBltMode(IntPtr hdc, int mode);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool SetBrushOrgEx(IntPtr hdc, int x, int y, IntPtr prev);
 
     private static int RefreshRate(Screen screen)
     {
