@@ -42,6 +42,7 @@ internal sealed class MainForm : Form
     private FormWindowState _windowedState;
     private Rectangle _windowedBounds;
     private bool _fullscreen;
+    private bool _userLeftFullscreen;
 
     public MainForm(AppSettings settings, bool startFullscreen)
     {
@@ -67,8 +68,11 @@ internal sealed class MainForm : Form
         _server.CursorImageChanged += OnCursorImage;
         _server.StateChanged += (s, detail) => UI(() =>
         {
+            bool startedStreaming = s == SessionState.Streaming && _state != SessionState.Streaming;
             _state = s;
             _stateDetail = detail;
+            // Fullscreen shows the Mac desktop 1:1, with no scaling cost and sharp text.
+            if (startedStreaming && !_fullscreen && !_userLeftFullscreen) ToggleFullscreen();
             if (s == SessionState.Waiting) ClearVideo();
             UpdateWindowsCursor();
             Invalidate();
@@ -462,10 +466,12 @@ internal sealed class MainForm : Form
         switch (e.KeyCode)
         {
             case Keys.F11:
+                if (_fullscreen) _userLeftFullscreen = true;
                 ToggleFullscreen();
                 e.Handled = true;
                 break;
             case Keys.Escape when _fullscreen:
+                _userLeftFullscreen = true;
                 ToggleFullscreen();
                 e.Handled = true;
                 break;
@@ -544,8 +550,10 @@ internal sealed class MainForm : Form
         try
         {
             bool oneToOne = dest.Width == frame.Width && dest.Height == frame.Height;
-            // HALFTONE looks right when scaling down text; COLORONCOLOR is cheaper when scaling up.
-            SetStretchBltMode(hdc, oneToOne ? COLORONCOLOR : dest.Width < frame.Width ? HALFTONE : COLORONCOLOR);
+            // HALFTONE filters nicely but costs ~35 ms per 1440p frame on a real PC, which halves the
+            // frame rate. Use it only for big shrinks where COLORONCOLOR would drop whole rows of text.
+            bool bigShrink = dest.Width * 2 < frame.Width;
+            SetStretchBltMode(hdc, !oneToOne && bigShrink ? HALFTONE : COLORONCOLOR);
             SetBrushOrgEx(hdc, 0, 0, IntPtr.Zero);
             fixed (byte* pixels = frame.Pixels)
             {
